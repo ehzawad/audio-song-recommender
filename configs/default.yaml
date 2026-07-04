@@ -1,0 +1,17 @@
+feature_extraction:
+  sample_rate: 22050
+  duration: 30.0
+  offset: 0.0
+  n_fft: 2048
+  hop_length: 512
+  n_mfcc: 20
+  include_tempo: true
+
+index:
+  metric: cosine
+  algorithm: brute
+  pca_components: null
+  random_state: 42
+
+recommendation:
+  default_k: 10

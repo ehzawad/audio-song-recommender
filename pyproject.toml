@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "music-similarity-rec"
+version = "0.1.0"
+description = "Audio-based similar-song recommender using FMA or any local audio folder."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "ChatGPT generated starter"}]
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "scikit-learn>=1.3",
+    "librosa>=0.11",
+    "numba>=0.60",
+    "llvmlite>=0.43",
+    "soundfile>=0.12",
+    "joblib>=1.3",
+    "PyYAML>=6.0",
+    "requests>=2.31",
+    "tqdm>=4.66",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.9"
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[project.scripts]
+music-rec = "music_similarity_rec.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
