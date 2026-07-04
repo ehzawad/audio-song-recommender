@@ -244,6 +244,20 @@ pytest
 
 Since FMA has no ground-truth "these songs sound alike" labels, genre agreement among top-k neighbors is a standard proxy: a system with no acoustic signal would match genre roughly `1 / num_genres` of the time (0.125 for FMA's 8 genres); a good content-based system should score well above that.
 
+**What it measures.** For a query track, take its top-`k` recommended neighbors and check how many share the query's genre label. `purity = (# same-genre neighbors) / k`, averaged over many query tracks:
+
+```python
+same_genre_at_k = (results["genre"] == query_genre).mean()
+```
+
+If a system recommended randomly, purity would be about `1 / num_genres` by chance (0.125 for FMA's 8 balanced genres) — that's the baseline every measured score below is compared against. A purity of, say, 0.6 means roughly 6 of the top 10 recommended tracks share the query's genre, on average.
+
+**Why genre, and its limits.** Genre is a decent proxy because tracks in the same genre tend to share instrumentation, rhythm, and production style — the same acoustic properties this system's features are built to capture. But it's only a proxy, not ground truth:
+
+- A system can score high purity while still recommending obvious, uninteresting matches.
+- A genuinely good cross-genre match (e.g., an Electronic track that shares a beat with a Hip-Hop track) gets "penalized" even though it may be a great recommendation.
+- It says nothing about artist diversity, novelty, or whether a human listener would actually enjoy the result — which is why the [other proxy tasks](#other-proxy-tasks-worth-adding) below (artist leakage, listening tests, query-excerpt stability) exist as complementary checks, not replacements.
+
 Reproduce with:
 
 ```zsh
