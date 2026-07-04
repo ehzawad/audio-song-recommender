@@ -13,6 +13,7 @@ The default dataset target is the **Free Music Archive (FMA)** because it includ
 - Recommendation by uploading/providing a new query audio file.
 - A small FastAPI service for HTTP recommendations.
 - A tiny generated toy audio corpus so you can smoke-test the whole pipeline without downloading gigabytes.
+- Optional: a neural embedding upgrade path (`scripts/clap_embed.py`) using a pretrained CLAP model, plus a reproducible genre-purity evaluation script.
 
 ## Mental model
 
@@ -142,6 +143,20 @@ Equivalent script:
 ./scripts/run_fma_small_fast_features.sh
 ```
 
+## Neural embeddings (optional upgrade)
+
+The default `AudioFeatureExtractor` produces 309-dim hand-engineered features (MFCC, chroma, spectral shape, RMS, ZCR, tempo). `scripts/clap_embed.py` swaps this for [CLAP](https://huggingface.co/laion/clap-htsat-unfused) (`laion/clap-htsat-unfused`), a pretrained contrastive audio-text model, while keeping the same `SimilarityIndex`/CLI/API downstream.
+
+```zsh
+python -m pip install torch transformers
+python scripts/clap_embed.py --limit 100   # smoke test
+python scripts/clap_embed.py               # full fma_small (8000 tracks)
+```
+
+Each track is embedded as three deterministic 10-second windows, L2-normalized and averaged. The script checkpoints every 250 tracks to `artifacts/fma_small_clap2/checkpoint.npz`, so a run can be safely interrupted and resumed. It uses `CUDA_VISIBLE_DEVICES` if set; without a GPU it falls back to CPU (slower).
+
+**Known checkpoint issue:** `laion/larger_clap_music` produces collapsed/degenerate audio embeddings through the `transformers` `ClapModel` API (verified on both transformers 4.57 and 5.13) — it scores *worse* than the classical baseline and should not be used. `laion/clap-htsat-unfused` does not have this problem; it is the checkpoint `clap_embed.py` uses by default.
+
 ## Run the API
 
 ```zsh
@@ -178,6 +193,13 @@ src/music_similarity_rec/
   recommender.py  high-level recommendation API
   schemas.py      dataclasses and ID helpers
   toydata.py      synthetic audio generator
+
+scripts/
+  run_toy_demo.sh                  toy pipeline demo
+  run_fma_small_audio.sh            fully audio-based FMA small demo
+  run_fma_small_fast_features.sh    precomputed-features FMA small demo
+  clap_embed.py                     neural (CLAP) embedding pipeline
+  eval_genre_purity.py              genre-purity@k evaluation
 ```
 
 ## Configuration
@@ -216,26 +238,51 @@ index:
 pytest
 ```
 
-## Evaluation ideas
+## Evaluation
 
-Content similarity can be evaluated with several proxy tasks:
+### Genre purity@k
 
-- Nearest-neighbor genre purity: how often top-k neighbors share `genre`.
-- Artist leakage checks: whether the system recommends the same artist too often.
-- A/B listening tests: ask listeners whether the recommendations make acoustic sense.
-- Query perturbation: encode different excerpts of the same track and verify stable neighborhoods.
+Since FMA has no ground-truth "these songs sound alike" labels, genre agreement among top-k neighbors is a standard proxy: a system with no acoustic signal would match genre roughly `1 / num_genres` of the time (0.125 for FMA's 8 genres); a good content-based system should score well above that.
 
-A minimal genre-purity loop is easy to add after recommendations:
+Reproduce with:
 
-```python
-same_genre_at_k = (results["genre"] == query_genre).mean()
+```zsh
+python scripts/eval_genre_purity.py --artifacts-dir artifacts/fma_small_audio --k 10 --n 50
 ```
+
+Measured on `fma_small` (8,000 tracks, 8 genres), `k=10`, 50 sampled query tracks, seed 0:
+
+| Index | Feature space | Genre purity@10 |
+|---|---|---|
+| `fma_small_features` | FMA precomputed, 518-dim | 0.452 |
+| `fma_small_audio` | This project's `AudioFeatureExtractor`, 309-dim | 0.464 |
+| `fma_small_clap` (CLAP, see below) | `laion/clap-htsat-unfused`, 512-dim | 0.600 |
+| — | random baseline | 0.125 |
+
+All three indexes clear the random baseline by 3.6–4.8x; the pretrained CLAP embeddings noticeably outperform both hand-engineered feature sets on this proxy metric. Numbers will shift somewhat with a different sample size/seed or FMA subset — treat them as directional, not exact.
+
+### Robustness to new/degraded audio
+
+`recommend-audio` and `POST /audio/similar` exist specifically so a query song never has to be one already in the index. To check this actually generalizes (not just "the model memorized the corpus"), query with audio the index has not seen in its original form:
+
+- **Mildly degraded** (re-encoded to 64 kbps MP3, volume-shifted): the CLAP index retrieved the original track in its top-3 for 3 of 4 test clips (2 at rank 1).
+- **Heavily degraded** (downsampled to 8 kHz, band-limited to telephone bandwidth 300–3400 Hz, added noise): self-retrieval largely fails for both feature spaces, but the CLAP index still frequently ranks same-genre tracks highest — the embedding degrades gracefully rather than catastrophically.
+
+Takeaway: the system is robust to realistic quality variation (different encodes/bitrates of the same recording) but is not an audio fingerprinting system — it will not identify a track through severe telephone-grade filtering. For exact-match "what song is this" identification under heavy distortion, pair this with a dedicated fingerprinting approach (e.g., chromaprint/Shazam-style hashing) rather than relying on similarity embeddings alone.
+
+### Other proxy tasks worth adding
+
+- Artist leakage checks: whether the system over-recommends the same artist.
+- A/B listening tests: ask listeners whether the recommendations make acoustic sense.
+- Query-excerpt stability: encode different excerpts of the *same* track and verify the neighborhoods stay similar.
 
 ## Known limitations
 
 This is a content-based baseline. It does not learn from user behavior, playlists, skips, saves, or session context. That is why it will not fully reproduce Spotify’s recommender, which is a hybrid system. The upside is that this project is inspectable: every recommendation comes from feature-space distance.
 
-For higher-quality audio embeddings, replace `AudioFeatureExtractor` with a pretrained music embedding model and keep the rest of the system nearly unchanged: vectors go in, nearest-neighbor retrieval comes out.
+For higher-quality audio embeddings, see [Neural embeddings](#neural-embeddings-optional-upgrade) above — `scripts/clap_embed.py` swaps `AudioFeatureExtractor` for a pretrained CLAP model while keeping the rest of the system (index, CLI, API) unchanged: vectors go in, nearest-neighbor retrieval comes out.
+
+`recommend-audio`/`POST /audio/similar` only work correctly against an index built with a matching feature extractor: query and corpus vectors must live in the same feature space (see [Robustness to new/degraded audio](#robustness-to-newdegraded-audio)).
 
 ## Licensing notes
 
